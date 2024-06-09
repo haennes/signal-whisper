@@ -6,45 +6,44 @@
   outputs = { self, nixpkgs }:
     let
       system = "x86_64-linux";
+      models = [
+        "tiny.en"
+        "tiny"
+        "tiny-q5_1"
+        "tiny.en-q5_1"
+        "base.en"
+        "base"
+        "base-q5_1"
+        "base.en-q5_1"
+        "small.en"
+        "small.en-tdrz"
+        "small"
+        "small-q5_1"
+        "small.en-q5_1"
+        "medium"
+        "medium.en"
+        "medium-q5_0"
+        "medium.en-q5_0"
+        "large-v1"
+        "large-v2"
+        "large-v3"
+        "large-v3-q5_0"
+      ];
       pkgs = nixpkgs.legacyPackages.${system};
+      lib = nixpkgs.lib;
       name = "signal-whisper";
-      script = out_path: pkgs.writeScriptBin name "
-        #!/bin/sh
-        ffmpeg -i ~/signal-*.mp3 -y -ar 16000 /tmp/out.wav -v 24 -stats
-        whisper-cpp /tmp/out.wav -otxt -l de -m  ${out_path}/large-v3-q5_0.bin --print-progress
-      ";
-      buildInputsPkgs = with pkgs; [ ffmpeg openai-whisper-cpp ];
-      warn = pkgs.writeShellScriptBin "donotrun" "echo do not run this";
+      recursiveMerge = listOfAttrsets:
+        lib.fold (attrset: acc: lib.recursiveUpdate attrset acc) { }
+        listOfAttrsets;
+      generic_model_download = model: import ./generic_download_model.nix{inherit pkgs model;};
+      generic_whisper = model_name: model_pkg: import ./generic_whisper.nix{inherit pkgs model_name model_pkg name;};
+
     in {
       packages.x86_64-linux = rec {
-        large-v3-q5_0 = pkgs.stdenv.mkDerivation {
-          name = "large-v3-q5_0.bin";
-          src = pkgs.fetchurl {
-            #curlOpts = "-L";
-            url =
-              "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3.bin";
-            hash = "sha256-ZNGCtEC5jVIDxPm9VBVE2ExgUZbE97hF36EfsjWU0eI=";
-          };
-          phases = ["installPhase" "unpackPhase"];
-          installPhase = ''
-             mkdir -p $out/bin
-             cp ${warn}/bin/donotrun $out/bin/large
-          '';
-          unpackPhase = ''
-             cp $src $out/large-v3-q5_0.bin
-          '';
-        };
+        large-v3-q5_0 = generic_model_download "large-v3-q5_0";
 
         default = signal-whisper;
-        signal-whisper = pkgs.symlinkJoin {
-          inherit name;
-          version = "0.0.1";
-          paths = [ (script "${large-v3-q5_0}")  large-v3-q5_0] ++ buildInputsPkgs;
-          buildInputs = with pkgs; [ makeWrapper ];
-          postBuild = ''
-            wrapProgram $out/bin/${name} --prefix PATH : $out/bin --prefix PATH : ${large-v3-q5_0}/large-v3-q5_0.bin
-          '';
-        };
+        signal-whisper = generic_whisper "large-v3-q5_0" large-v3-q5_0;
       };
 
     };
