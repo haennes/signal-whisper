@@ -1,11 +1,11 @@
 {
-  description = "A very basic flake";
+  description = "using whisper to translate signal speech notes saved in ~";
 
   inputs = { nixpkgs.url = "github:nixos/nixpkgs?ref=nixos-unstable"; };
 
-  outputs = { self, nixpkgs }:
+  outputs = { nixpkgs, systems, ... }:
     let
-      system = "x86_64-linux";
+      eachSystem = f: nixpkgs.lib.genAttrs (import systems) (system: f nixpkgs.legacyPackages.${system} nixpkgs.lib);
       models = [
         ["tiny.en" "sha256-kh5M+Ghv3Zk9zQgaXaW2w2W/3hFi5ysI11rHUomSCx8="]
         ["tiny" "sha256-vgfgSOHlma1GNByNKhNWRQl6U4IhZ4t6zdGxkZxuGyE="]
@@ -30,9 +30,12 @@
         ["large-v3" "sha256-ZNGCtEC5jVIDxPm9VBVE2ExgUZbE97hF36EfsjWU0eI="]
         ["large-v3-q5_0" "sha256-11eV7P8/g7X6qJ0ZAGBK2MeAq9Vzn65AbeGfI+zZitE="]
       ];
-      pkgs = nixpkgs.legacyPackages.${system};
-      lib = nixpkgs.lib;
       name = "signal-whisper";
+
+
+    in {
+      packages = eachSystem (pkgs: lib:
+      let
       recursiveMerge = listOfAttrsets:
         lib.fold (attrset: acc: lib.recursiveUpdate attrset acc) { }
         listOfAttrsets;
@@ -42,9 +45,8 @@
         import ./generic_whisper.nix {
           inherit pkgs model_name model_pkg name;
         };
-
-    in {
-      packages.x86_64-linux = recursiveMerge (lib.lists.map (model:
+      in
+        recursiveMerge (lib.lists.map (model:
       let
       model_name = lib.lists.head model;
       model_hash = lib.lists.last model;
@@ -55,7 +57,7 @@
         "${safe_model_name}" = curr;
 
         "signal-whisper-${safe_model_name}" = generic_whisper model_name curr;
-      }) models);
-
+      }) models)
+      );
     };
 }
