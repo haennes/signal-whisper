@@ -1,4 +1,4 @@
-{pkgs, model, ...}:
+{pkgs, model, hash, ...}:
 let
 warn = pkgs.writeShellScriptBin "donotrun" "echo do not run this";
 in pkgs.stdenv.mkDerivation {
@@ -7,7 +7,7 @@ in pkgs.stdenv.mkDerivation {
             #curlOpts = "-L";
             url =
               "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-${model}.bin";
-            hash = "sha256-11eV7P8/g7X6qJ0ZAGBK2MeAq9Vzn65AbeGfI+zZitE=";
+            inherit hash;
           };
           phases = [ "installPhase" "unpackPhase" ];
           installPhase = ''
