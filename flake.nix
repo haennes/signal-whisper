@@ -3,7 +3,7 @@
 
   inputs = { nixpkgs.url = "github:nixos/nixpkgs?ref=nixos-unstable"; };
 
-  outputs = { nixpkgs, systems, ... }:
+  outputs = { nixpkgs, systems, self, ... }:
     let
       eachSystem = f: nixpkgs.lib.genAttrs (import systems) (system: f nixpkgs.legacyPackages.${system} nixpkgs.lib);
       models = [
@@ -59,5 +59,8 @@
         "signal-whisper-${safe_model_name}" = generic_whisper model_name curr;
       }) models)
       );
+      overlays.default = final: prev:
+        let system = prev.stdenv.hostPlatform.system;
+        in self.packages."${system}";
     };
 }
