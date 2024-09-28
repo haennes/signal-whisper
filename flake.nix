@@ -3,9 +3,10 @@
 
   inputs = { nixpkgs.url = "github:nixos/nixpkgs?ref=nixos-unstable"; };
 
-  outputs = { nixpkgs, systems, self, ... }:
+  outputs = { nixpkgs, self, ... }:
     let
-      eachSystem = f: nixpkgs.lib.genAttrs (import systems) (system: f nixpkgs.legacyPackages.${system} nixpkgs.lib);
+      systems = ["x86_64-linux"];
+      eachSystem = f: nixpkgs.lib.genAttrs systems (system: f nixpkgs.legacyPackages.${system} nixpkgs.lib);
       models = [
         ["tiny.en" "sha256-kh5M+Ghv3Zk9zQgaXaW2w2W/3hFi5ysI11rHUomSCx8="]
         ["tiny" "sha256-vgfgSOHlma1GNByNKhNWRQl6U4IhZ4t6zdGxkZxuGyE="]
@@ -59,8 +60,6 @@
         "signal-whisper-${safe_model_name}" = generic_whisper model_name curr;
       }) models)
       );
-      overlays.default = final: prev:
-        let system = prev.stdenv.hostPlatform.system;
-        in self.packages."${system}";
+      overlays.default = final: prev: self.packages."x86_64-linux";
     };
 }
