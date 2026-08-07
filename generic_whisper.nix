@@ -1,6 +1,6 @@
 {pkgs, name, model_name, model_pkg}:
 let
-      buildInputsPkgs = with pkgs; [ ffmpeg openai-whisper-cpp ];
+      buildInputsPkgs = with pkgs; [ ffmpeg whisper-cpp ];
       script = model: out_path: import ./script.nix {inherit pkgs out_path model; name = "${name}-${model}";};
 in
 pkgs.symlinkJoin {
