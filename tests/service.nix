@@ -79,5 +79,14 @@ pkgs.testers.runNixOSTest {
     # the service logged the transcription and the unit carries the credentials
     machine.succeed("journalctl -u signal-whisper --no-pager | grep -q 'transcribing voice note'")
     machine.succeed("systemctl show signal-whisper -p LoadCredential | grep -q accounts.json")
+
+    # secrets are only initialized once: restarting the service must not
+    # re-install them (signal-cli mutates accounts.json/account.db at runtime).
+    machine.succeed("test -f /var/lib/signal-whisper/.signal-whisper-secrets-installed")
+    machine.systemctl("restart", "signal-whisper.service")
+    machine.wait_for_unit("signal-whisper.service")
+    machine.succeed(
+      "test $(journalctl -u signal-whisper --no-pager | grep -c 'installed account secrets for') -eq 1"
+    )
   '';
 }

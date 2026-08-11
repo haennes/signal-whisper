@@ -222,6 +222,12 @@ let
         exit 1
       }
 
+      let marker = ($home | path join ".signal-whisper-secrets-installed")
+      if ($marker | path exists) {
+        print "signal-whisper: account secrets already installed, skipping"
+        return
+      }
+
       let conf = (try { open --raw ($creds | path join "config.json") | from json } catch { null })
       let account = (if $conf == null { $env.SIGNAL_WHISPER_ACCOUNT? | default "" } else { $conf.account? | default "" })
       if ($account | is-empty) {
@@ -253,6 +259,7 @@ let
       let acct_file = ($data_dir | path join $acct)
       install -m 600 ($creds | path join "account") $acct_file
 
+      touch $marker
       print $"signal-whisper: installed account secrets for ($account)"
     }
   '';
