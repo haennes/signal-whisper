@@ -11,6 +11,19 @@
 let
   stub = name:
     pkgs.writeShellScriptBin name (builtins.readFile ./stubs/${name}.sh);
+  # The module bakes `pkgs.signal-cli`/`pkgs.ffmpeg` into its wrapper PATH, so
+  # hand it a pkgs built with the stubs via a nixpkgs overlay (a plain
+  # `nixpkgs.overlays` on the node never reaches the module's pkgs argument).
+  stubPkgs = import pkgs.path {
+    inherit (pkgs) system;
+    config = { };
+    overlays = [
+      (final: prev: {
+        signal-cli = stub "signal-cli";
+        ffmpeg = stub "ffmpeg";
+      })
+    ];
+  };
 in
 pkgs.testers.runNixOSTest {
   name = "signal-whisper-nushell";
@@ -18,17 +31,12 @@ pkgs.testers.runNixOSTest {
   nodes.machine = { pkgs, lib, ... }: {
     imports = [ ../module.nix ];
 
-    nixpkgs.overlays = lib.mkForce [
-      (final: prev: {
-        signal-cli = stub "signal-cli";
-        ffmpeg = stub "ffmpeg";
-      })
-    ];
+    _module.args.pkgs = lib.mkForce stubPkgs;
 
     services.signal-whisper = {
       enable = true;
       model = pkgs.writeText "model.bin" "fake-model";
-      whisperPackage = stub "whisper-cpp";
+      whisperPackage = stub "whisper-cli";
       secrets = {
         accountsFile = pkgs.writeText "accounts.json" ''
           {
