@@ -65,7 +65,7 @@ let
       let atts = ($data.attachments?
         | default []
         | where { |a| ($a.voiceNote? == true) or (($a.contentType? | default "") | str starts-with "audio/") }
-        | each { |a| $a.filename? | default $"($env.HOME)/.local/share/signal-cli/attachments/($a.id)" }
+        | each { |a| $a.filename? | default $"($env.HOME)/.local/share/signal-cli/attachments/($a.id?)" }
         | where { |f| $f != null })
       if ($atts | is-empty) {
         print $"no audio attachment in ($data.attachments?)"
@@ -171,13 +171,24 @@ let
       print -e $"signal-whisper: starting receive loop \(account=($cfg.account), group=($cfg.send_group)\)"
       loop {
         print "getting msg"
-        let raw = ((^signal-cli -a $cfg.account -o json receive -t 5) | lines)
-        if ($raw | length ) == 0 {
+        let out = (^signal-cli -a $cfg.account -o json receive -t 5 | complete)
+        if $out.exit_code != 0 {
+          print -e $"signal-whisper: signal-cli receive failed: ($out.stderr)"
           sleep 10sec
           continue
         }
-        let parsed = ($raw | reduce {|e, acc| $acc + "," + $e} | "[" + $in +  "]" | from json)
-        print $"recieved msg ($raw) ($parsed)"
+        let stdout = ($out.stdout | str trim)
+        if ($stdout | is-empty) {
+          sleep 10sec
+          continue
+        }
+        let parsed = (try { $stdout | from json } catch { null })
+        if ($parsed == null) {
+          print -e "signal-whisper: could not parse signal-cli receive output"
+          sleep 10sec
+          continue
+        }
+        print $"recieved msg ($stdout)"
         for m in $parsed {
           print $"processing message ($m)"
           process-msg $m $cfg
