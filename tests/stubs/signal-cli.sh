@@ -4,6 +4,7 @@
 ACCT=""
 DATA=""
 ARGS=()
+ORIG="$*"
 while [ $# -gt 0 ]; do
   case "$1" in
     -a) ACCT="$2"; shift 2 ;;
@@ -62,7 +63,8 @@ JSON
     fi
     ;;
   send)
-    echo "CALL: $*" >> /tmp/send-log.txt
+    echo "CALL: $ORIG" >> /tmp/send-log.txt
+    cat >> /tmp/send-log.txt
     ;;
   link)
     mkdir -p "$DATA/data/${ACCT}"
