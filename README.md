@@ -125,11 +125,18 @@ secrets emits a warning; the service is started without them.
 
 ## Tests
 
-The flake ships a NixOS VM test (`checks.<system>.nushell`) that replaces
-signal-cli/ffmpeg/whisper-cpp with stubs and verifies the full chain end to
-end: secrets installation, filtering by group/sender, transcription and
-reply, and that secrets are only installed once across restarts.
+**Transcribe Test Audio from https://etc.usf.edu/lit2go**
+The flake ships two checks (`checks.<system>.*`):
+
+- `nushell` – a NixOS VM test that replaces signal-cli/ffmpeg/whisper-cpp with
+  stubs and verifies the full chain end to end: secrets installation,
+  filtering by group/sender, transcription and reply, and that secrets are
+  only installed once across restarts.
+- `transcription` – feeds the real `tests/transcribing.mp3` through the
+  actual ffmpeg + whisper pipeline and checks the transcribed text.
 
 ```console
 nix flake check
 ```
+
+

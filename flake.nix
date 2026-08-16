@@ -77,6 +77,7 @@
       nixosModules.signal-whisper = import ./module.nix;
       checks = eachSystem (pkgs: lib: {
         nushell = import ./tests/service.nix { inherit pkgs; };
+        transcription = import ./tests/transcription.nix { inherit pkgs; };
       });
       overlays.default = final: prev: self.packages."x86_64-linux";
       hydraJobs.packages = packages;
