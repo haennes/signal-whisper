@@ -15,7 +15,7 @@ let
       "${lib.makeBinPath [
         pkgs.coreutils
         pkgs.ffmpeg
-        pkgs.signal-cli
+        cfg.signalCliPackage
         cfg.whisperPackage
       ]}"
     ];
@@ -318,6 +318,13 @@ in
       default = pkgs.whisper-cpp;
       defaultText = "pkgs.whisper-cpp";
       description = "whisper.cpp binary to use for transcription.";
+    };
+
+    signalCliPackage = lib.mkOption {
+      type = lib.types.package;
+      default = pkgs.signal-cli;
+      defaultText = "pkgs.signal-cli";
+      description = "signal-cli binary to use for the Signal receive/send loop.";
     };
 
     language = lib.mkOption {
