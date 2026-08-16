@@ -11,15 +11,15 @@
 let
   stub = name:
     pkgs.writeShellScriptBin name (builtins.readFile ./stubs/${name}.sh);
-  # The module bakes `pkgs.signal-cli`/`pkgs.ffmpeg` into its wrapper PATH, so
-  # hand it a pkgs built with the stubs via a nixpkgs overlay (a plain
-  # `nixpkgs.overlays` on the node never reaches the module's pkgs argument).
+  # The module still bakes `pkgs.ffmpeg` into its wrapper PATH, so hand it a
+  # pkgs built with the stubs via a nixpkgs overlay (a plain `nixpkgs.overlays`
+  # on the node never reaches the module's pkgs argument). signal-cli and
+  # whisper-cpp are injected through the module's *Package options instead.
   stubPkgs = import pkgs.path {
     inherit (pkgs) system;
     config = { };
     overlays = [
       (final: prev: {
-        signal-cli = stub "signal-cli";
         ffmpeg = stub "ffmpeg";
       })
     ];
@@ -37,6 +37,7 @@ pkgs.testers.runNixOSTest {
       enable = true;
       model = pkgs.writeText "model.bin" "fake-model";
       whisperPackage = stub "whisper-cli";
+      signalCliPackage = stub "signal-cli";
       secrets = {
         accountsFile = pkgs.writeText "accounts.json" ''
           {
@@ -81,12 +82,14 @@ pkgs.testers.runNixOSTest {
     # exactly the matching voice note gets transcribed and sent back
     machine.wait_until_succeeds("grep -q 'Transcript: hallo welt' /tmp/send-log.txt")
     machine.succeed("grep -q -- '--notify-self' /tmp/send-log.txt")
-    machine.succeed("grep -q -- '-g 5d2f0a1b' /tmp/send-log.txt")
+    machine.succeed("grep -q -- '-g XS8KGw==' /tmp/send-log.txt")
     machine.succeed("test $(grep -c '^CALL:' /tmp/send-log.txt) -eq 1")
 
-    # the service logged the transcription and the unit carries the credentials
+    # the service logged the transcription and the credentials were loaded
     machine.succeed("journalctl -u signal-whisper --no-pager | grep -q 'transcribing voice note'")
-    machine.succeed("systemctl show signal-whisper -p LoadCredential | grep -q accounts.json")
+    machine.succeed("find /run/credentials -maxdepth 2 -name accounts.json | grep -q .")
+    machine.succeed("find /run/credentials -maxdepth 2 -name config.json | grep -q .")
+    machine.succeed("find /run/credentials -maxdepth 2 -name account | grep -q .")
 
     # secrets are only initialized once: restarting the service must not
     # re-install them (signal-cli mutates accounts.json/account.db at runtime).
