@@ -109,7 +109,13 @@ let
       if $cfg.notify_self {
         $sargs = ($sargs | append "--notify-self")
       }
-      let body = $"($cfg.prefix)($reply)"
+      # systemd/nushell may eat a trailing space in the prefix env var, so
+      # make sure there is always exactly one space before the reply.
+      let body = if ($cfg.prefix | str ends-with " ") {
+        $"($cfg.prefix)($reply)"
+      } else {
+        $"($cfg.prefix) ($reply)"
+      }
       let r = ($body | ^signal-cli -a $cfg.account ...$sargs --message-from-stdin | complete)
       if $r.exit_code != 0 {
         print -e "signal-whisper: failed to send transcription"
