@@ -51,7 +51,7 @@
       packages = eachSystem (pkgs: lib:
         let
           recursiveMerge = listOfAttrsets:
-            lib.fold (attrset: acc: lib.recursiveUpdate attrset acc) { }
+            lib.foldr (attrset: acc: lib.recursiveUpdate attrset acc) { }
             listOfAttrsets;
           generic_model_download = model: hash:
             import ./generic_download_model.nix { inherit pkgs model hash; };
