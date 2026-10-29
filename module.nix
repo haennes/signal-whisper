@@ -336,6 +336,12 @@ in
       description = "System user the service runs as.";
     };
 
+    group = lib.mkOption {
+      type = lib.types.str;
+      default = "signal-whisper";
+      description = "System group the service runs as.";
+    };
+
     model = lib.mkOption {
       type = lib.types.path;
       description = ''
@@ -457,12 +463,12 @@ in
 
     users.users.${cfg.user} = {
       isSystemUser = true;
-      group = cfg.user;
+      group = cfg.group;
       home = cfg.dataDir;
       createHome = true;
       description = "Signal voice note transcription service";
     };
-    users.groups.${cfg.user} = { };
+    users.groups.${cfg.group} = { };
 
     systemd.services.signal-whisper = {
       description = "Signal voice note transcription";
@@ -473,7 +479,7 @@ in
       serviceConfig = {
         Type = "simple";
         User = cfg.user;
-        Group = cfg.user;
+        Group = cfg.group;
         Restart = "on-failure";
         RestartSec = 15;
         Environment = [
