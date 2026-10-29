@@ -76,7 +76,15 @@ let
           let atts = ($data.attachments?
             | default []
             | where { |a| ($a.voiceNote? == true) or (($a.contentType? | default "") | str starts-with "audio/") }
-            | each { |a| $a.filename? | default $"($env.HOME)/.local/share/signal-cli/attachments/($a.id?)" }
+            | each { |a|
+                let filename = ($a.filename? | default "")
+                if not ($filename | is-empty) and ($filename | path exists) {
+                  $filename
+                } else {
+                  let id = ($a.id? | default "")
+                  if ($id | is-empty) { $filename } else { $"($env.HOME)/.local/share/signal-cli/attachments/($id)" }
+                }
+              }
             | where { |f| $f != null })
           if ($atts | is-empty) {
             print $"no audio attachment in ($data.attachments?)"
