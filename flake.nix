@@ -26,6 +26,7 @@
       checks = eachSystem (
         pkgs: lib: {
           nushell = import ./tests/service.nix { inherit pkgs; };
+          modelOptions = import ./tests/model-options.nix { inherit pkgs lib; };
           transcription = import ./tests/transcription.nix { inherit pkgs; };
         }
       );
