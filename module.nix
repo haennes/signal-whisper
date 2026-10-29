@@ -7,10 +7,25 @@
 
 let
   cfg = config.services.signal-whisper;
+  name = "signal-whisper";
+
+  modelPackages = import ./modelPackages.nix {
+    inherit pkgs lib name;
+  };
+  modelPath =
+    if cfg.model != null then
+      cfg.model
+    else
+      let
+        packageName = lib.replaceStrings [ "." ] [ "_" ] cfg.modelName;
+        package = modelPackages.${packageName};
+      in
+      "${package}/${cfg.modelName}.bin";
 
   secretsProvided =
     cfg.secrets.accountsFile != null
     || cfg.secrets.accountDbFile != null
+    || cfg.secrets.accountFile != null
     || cfg.secrets.configFile != null;
 
   # Configuration is passed via environment variables set in the unit (not
@@ -343,10 +358,23 @@ in
     };
 
     model = lib.mkOption {
-      type = lib.types.path;
+      type = lib.types.nullOr lib.types.path;
+      default = null;
+      example = "\"\${pkgs.large-v3-q5_0}/large-v3-q5_0.bin\"";
       description = ''
-        Path to a ggml-*.bin whisper model, e.g. one of the
-        signal-whisper-* model packages built by this flake.
+        Path to a ggml-*.bin whisper model.
+      '';
+    };
+
+    modelName = lib.mkOption {
+      type = lib.types.nullOr lib.types.str;
+      default = null;
+      example = "tiny.en";
+      description = ''
+        Name of a model packaged by this flake.
+        For a list of all models see `modelPackages.nix` in the repo.
+
+        To use a model not packaged in this flake, use `service.signal-whisper.model`.
       '';
     };
 
@@ -408,6 +436,8 @@ in
         default = null;
         description = ''
           Secret file `account.db` as exported by the linking script.
+          This files user and group must match signal-whisper's.
+          All other secrets may be owned by any user and group.
           Usually wired to agenix/sops via a file path.
         '';
       };
@@ -430,6 +460,20 @@ in
   config = lib.mkIf cfg.enable {
     assertions = [
       {
+        assertion = cfg.modelName != null || cfg.model != null;
+        message = "Either `services.signal-whisper.modelName` or `services.signal-whisper.model` must be set.";
+      }
+      {
+        assertion = cfg.modelName == null || cfg.model == null;
+        message = "Only one of `services.signal-whisper.modelName` or `services.signal-whisper.model` may be set.";
+      }
+      {
+        assertion =
+          cfg.modelName == null
+          || (builtins.hasAttr (lib.replaceStrings [ "." ] [ "_" ] cfg.modelName) modelPackages);
+        message = "`services.signal-whisper.modelName` must name a model package provided by this flake.";
+      }
+      {
         assertion =
           !secretsProvided
           || (
@@ -439,6 +483,7 @@ in
             && cfg.secrets.accountFile != null
           );
         message = ''
+          services.signal-whisper.secrets.accountFile,
           services.signal-whisper.secrets.accountsFile,
           services.signal-whisper.secrets.accountDbFile and
           services.signal-whisper.secrets.configFile must be set together.
@@ -456,6 +501,7 @@ in
         and supply the three files it exports to this server:
 
           services.signal-whisper.secrets.accountsFile = "/path/to/accounts.json";
+          services.signal-whisper.secrets.accountFile = "/path/to/account";
           services.signal-whisper.secrets.accountDbFile = "/path/to/account.db";
           services.signal-whisper.secrets.configFile = "/path/to/config.json";
       ''
@@ -484,7 +530,7 @@ in
         RestartSec = 15;
         Environment = [
           "HOME=${cfg.dataDir}"
-          "SIGNAL_WHISPER_MODEL=${cfg.model}"
+          "SIGNAL_WHISPER_MODEL=${modelPath}"
           "SIGNAL_WHISPER_LANGUAGE=${cfg.language}"
           "SIGNAL_WHISPER_PREFIX=${cfg.messagePrefix}"
           "SIGNAL_WHISPER_NOTIFY_SELF=${if cfg.notifySelf then "1" else "0"}"

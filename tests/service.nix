@@ -34,7 +34,7 @@ pkgs.testers.runNixOSTest {
 
     services.signal-whisper = {
       enable = true;
-      model = pkgs.writeText "model.bin" "fake-model";
+      modelName = "tiny.en";
       whisperPackage = stub "whisper-cli";
       signalCliPackage = stub "signal-cli";
       secrets = {

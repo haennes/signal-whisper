@@ -30,9 +30,10 @@ installed into the service data directory once on first start.
 This flake provides:
 
 - `packages.<system>.signal-whisper-<model>` – wrapper around whisper.cpp plus
-  the model, e.g. `signal-whisper-tiny.en`. Dot characters in the model name
+  the model, e.g. `signal-whisper-tiny_en`. Dot characters in the model name
   are replaced by `_` in the flake attribute name (`tiny.en` → `tiny_en`).
-- `packages.<system>.<model>` – the raw `ggml-*.bin` model file
+- `packages.<system>.<model>` – the raw model package, containing the
+  `ggml-*.bin` file
   (`tiny_en`, `base`, `small-q5_1`, ...).
 - `packages.<system>.signal-whisper-link` – interactive linking tool.
 - `nixosModules.default` – the NixOS module.
@@ -45,7 +46,7 @@ the quantizations published by whisper.cpp (`.en`, `-q5_1`, `-q8_0`, `-q5_0`).
 Run the linking tool once on a machine you trust (your phone is needed to scan
 the QR code):
 
-```console
+```bash
 nix run .#signal-whisper-link -- +491234567890 ./signal-whisper-secrets
 ```
 
@@ -72,7 +73,14 @@ Copy the exported secret files to the server (typically wired to
 
 ```nix
 {
-  inputs.signal-whisper.url = "github:you/signal-whisper";
+  inputs = {
+    nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
+
+    signal-whisper = {
+      url = "github:haennes/signal-whisper";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+  };
 
   outputs = { nixpkgs, signal-whisper, ... }: {
     nixosConfigurations.myHost = nixpkgs.lib.nixosSystem {
@@ -81,12 +89,14 @@ Copy the exported secret files to the server (typically wired to
         ({ pkgs, ... }: {
           services.signal-whisper = {
             enable = true;
-            model = pkgs.signal-whisper-tiny-en; # or the model package of your choice
+            modelName = "tiny.en"; # or e.g. "base-q5_1"
             # language = "auto";   # or e.g. "de"
             # messagePrefix = "Transcript: ";
             # notifySelf = true;
             secrets = {
               accountsFile = "/run/secrets/accounts.json";
+              # The db's user and group must match signal-whisper's.
+              # All other secrets may be owned by any user and group.
               accountDbFile = "/run/secrets/account.db";
               accountFile = "/run/secrets/account";
               configFile = "/run/secrets/config.json";
@@ -99,15 +109,16 @@ Copy the exported secret files to the server (typically wired to
 }
 ```
 
-Note: `model` must be a path to a `ggml-*.bin` file. `pkgs.signal-whisper-tiny-en`
-resolves to the `signal-whisper-tiny.en` package of this flake.
+Set exactly one of `modelName` (a model package name such as `tiny.en`) or
+`model` (a path to a `ggml-*.bin` file).
 
 ## Module options
 
 | Option | Default | Description |
 |---|---|---|
 | `enable` | `false` | Enable the service. |
-| `model` | – | Path to a `ggml-*.bin` whisper model (required). |
+| `modelName` | – | Name of a model package provided by this flake, e.g. `tiny.en`. |
+| `model` | – | Path to a `ggml-*.bin` whisper model; mutually exclusive with `modelName`. |
 | `whisperPackage` | `pkgs.whisper-cpp` | whisper.cpp binary used for transcription. |
 | `signalCliPackage` | `pkgs.signal-cli` | signal-cli binary used for the receive/send loop. |
 | `dataDir` | `/var/lib/signal-whisper` | Directory holding the service and signal-cli data. |

@@ -18,7 +18,8 @@ case "$SUB" in
   receive)
     if [ ! -e /tmp/receive-done ]; then
       touch /tmp/receive-done
-      printf 'notreallyaudiodata' > /tmp/voice-a.mp4
+      mkdir -p "$HOME/.local/share/signal-cli/attachments"
+      printf 'notreallyaudiodata' > "$HOME/.local/share/signal-cli/attachments/voice-a-id"
       printf 'notreallyaudiodata' > /tmp/voice-b.mp4
       cat <<'JSON'
 [
@@ -29,7 +30,7 @@ case "$SUB" in
         "sentMessage": {
           "destination": "XS8KGw==",
           "attachments": [
-            {"voiceNote": true, "contentType": "audio/mp4", "filename": "/tmp/voice-a.mp4"}
+            {"voiceNote": true, "contentType": "audio/mp4", "filename": "voice-note.mp4", "id": "voice-a-id"}
           ]
         }
       }
