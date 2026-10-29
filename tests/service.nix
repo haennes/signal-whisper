@@ -10,6 +10,12 @@
 
 let
   stub = name: pkgs.writeShellScriptBin name (builtins.readFile ./stubs/${name}.sh);
+  modelPackages = import ../modelPackages.nix {
+    inherit pkgs;
+    lib = pkgs.lib;
+    name = "signal-whisper";
+  };
+  modelPath = "${modelPackages.tiny_en}/${modelPackages.tiny_en.name}.bin";
   # The module still bakes `pkgs.ffmpeg` into its wrapper PATH, so hand it a
   # pkgs built with the stubs via a nixpkgs overlay (a plain `nixpkgs.overlays`
   # on the node never reaches the module's pkgs argument). signal-cli and
@@ -34,7 +40,7 @@ pkgs.testers.runNixOSTest {
 
     services.signal-whisper = {
       enable = true;
-      modelName = "tiny.en";
+      modelName = "tiny_en";
       whisperPackage = stub "whisper-cli";
       signalCliPackage = stub "signal-cli";
       secrets = {
@@ -69,6 +75,8 @@ pkgs.testers.runNixOSTest {
   testScript = ''
     start_all()
     machine.wait_for_unit("signal-whisper.service")
+    machine.succeed("test -f '${modelPath}'")
+    machine.succeed("grep -Fq 'SIGNAL_WHISPER_MODEL=${modelPath}' /etc/systemd/system/signal-whisper.service")
 
     # preStart must have installed the secrets into the service data dir
     machine.wait_until_succeeds(

@@ -12,15 +12,24 @@ let
   modelPackages = import ./modelPackages.nix {
     inherit pkgs lib name;
   };
-  modelPath =
-    if cfg.model != null then
-      cfg.model
+  modelPackage =
+    if cfg.modelName == null then
+      null
     else
       let
         packageName = lib.replaceStrings [ "." ] [ "_" ] cfg.modelName;
-        package = modelPackages.${packageName};
       in
-      "${package}/${cfg.modelName}.bin";
+      if builtins.hasAttr packageName modelPackages && !(lib.hasPrefix "${name}-" packageName) then
+        modelPackages.${packageName}
+      else
+        null;
+  modelPath =
+    if cfg.model != null then
+      cfg.model
+    else if modelPackage != null then
+      "${modelPackage}/${modelPackage.name}.bin"
+    else
+      "";
 
   secretsProvided =
     cfg.secrets.accountsFile != null
@@ -470,7 +479,7 @@ in
       {
         assertion =
           cfg.modelName == null
-          || (builtins.hasAttr (lib.replaceStrings [ "." ] [ "_" ] cfg.modelName) modelPackages);
+          || modelPackage != null;
         message = "`services.signal-whisper.modelName` must name a model package provided by this flake.";
       }
       {
