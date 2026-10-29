@@ -9,8 +9,7 @@
 { pkgs }:
 
 let
-  stub = name:
-    pkgs.writeShellScriptBin name (builtins.readFile ./stubs/${name}.sh);
+  stub = name: pkgs.writeShellScriptBin name (builtins.readFile ./stubs/${name}.sh);
   # The module still bakes `pkgs.ffmpeg` into its wrapper PATH, so hand it a
   # pkgs built with the stubs via a nixpkgs overlay (a plain `nixpkgs.overlays`
   # on the node never reaches the module's pkgs argument). signal-cli and

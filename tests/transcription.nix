@@ -13,20 +13,25 @@ let
     hash = "sha256-kh5M+Ghv3Zk9zQgaXaW2w2W/3hFi5ysI11rHUomSCx8=";
   };
 in
-pkgs.runCommand "signal-whisper-transcription-test" {
-  nativeBuildInputs = [ pkgs.ffmpeg pkgs.whisper-cpp ];
-} ''
-  ffmpeg -y -v error -i ${./transcribing.mp3} -ar 16000 -ac 1 -f wav in.wav
-  whisper-cli -m ${model}/tiny.en.bin -f in.wav -otxt -of out
-
-  test -s out.txt
-  grep -qi 'dickinson' out.txt || {
-    echo "unexpected transcription:"
-    cat out.txt
-    exit 1
+pkgs.runCommand "signal-whisper-transcription-test"
+  {
+    nativeBuildInputs = [
+      pkgs.ffmpeg
+      pkgs.whisper-cpp
+    ];
   }
+  ''
+    ffmpeg -y -v error -i ${./transcribing.mp3} -ar 16000 -ac 1 -f wav in.wav
+    whisper-cli -m ${model}/tiny.en.bin -f in.wav -otxt -of out
 
-  echo "transcription test passed:"
-  cat out.txt
-  touch $out
-''
+    test -s out.txt
+    grep -qi 'dickinson' out.txt || {
+      echo "unexpected transcription:"
+      cat out.txt
+      exit 1
+    }
+
+    echo "transcription test passed:"
+    cat out.txt
+    touch $out
+  ''

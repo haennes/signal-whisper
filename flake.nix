@@ -1,14 +1,16 @@
 {
   description = "using whisper to translate signal speech notes saved in ~";
 
-  inputs = { nixpkgs.url = "github:nixos/nixpkgs?ref=nixos-unstable"; };
+  inputs = {
+    nixpkgs.url = "github:nixos/nixpkgs?ref=nixos-unstable";
+  };
 
-  outputs = { nixpkgs, self, ... }:
+  outputs =
+    { nixpkgs, self, ... }:
     let
       systems = [ "x86_64-linux" ];
-      eachSystem = f:
-        nixpkgs.lib.genAttrs systems
-        (system: f nixpkgs.legacyPackages.${system} nixpkgs.lib);
+      eachSystem =
+        f: nixpkgs.lib.genAttrs systems (system: f nixpkgs.legacyPackages.${system} nixpkgs.lib);
       models = [
         [ "tiny.en" "sha256-kh5M+Ghv3Zk9zQgaXaW2w2W/3hFi5ysI11rHUomSCx8=" ]
         [ "tiny" "sha256-vgfgSOHlma1GNByNKhNWRQl6U4IhZ4t6zdGxkZxuGyE=" ]
@@ -47,38 +49,56 @@
       ];
       name = "signal-whisper";
 
-    in rec {
-      packages = eachSystem (pkgs: lib:
+    in
+    rec {
+      packages = eachSystem (
+        pkgs: lib:
         let
-          recursiveMerge = listOfAttrsets:
-            lib.foldr (attrset: acc: lib.recursiveUpdate attrset acc) { }
-            listOfAttrsets;
-          generic_model_download = model: hash:
-            import ./generic_download_model.nix { inherit pkgs model hash; };
-          generic_whisper = model_name: model_pkg:
+          recursiveMerge =
+            listOfAttrsets: lib.foldr (attrset: acc: lib.recursiveUpdate attrset acc) { } listOfAttrsets;
+          generic_model_download =
+            model: hash: import ./generic_download_model.nix { inherit pkgs model hash; };
+          generic_whisper =
+            model_name: model_pkg:
             import ./generic_whisper.nix {
-              inherit pkgs model_name model_pkg name;
+              inherit
+                pkgs
+                model_name
+                model_pkg
+                name
+                ;
             };
-        in recursiveMerge (lib.lists.map (model:
-          let
-            model_name = lib.lists.head model;
-            model_hash = lib.lists.last model;
-            safe_model_name = lib.replaceStrings [ "." ] [ "_" ] model_name;
-            curr = generic_model_download model_name model_hash;
-          in {
-            "${safe_model_name}" = curr;
+        in
+        recursiveMerge (
+          lib.lists.map (
+            model:
+            let
+              model_name = lib.lists.head model;
+              model_hash = lib.lists.last model;
+              safe_model_name = lib.replaceStrings [ "." ] [ "_" ] model_name;
+              curr = generic_model_download model_name model_hash;
+            in
+            {
+              "${safe_model_name}" = curr;
 
-            "signal-whisper-${safe_model_name}" =
-              generic_whisper model_name curr;
-          }) models ++ [ {
-            "signal-whisper-link" = import ./link.nix { inherit pkgs lib name; };
-          } ]));
+              "signal-whisper-${safe_model_name}" = generic_whisper model_name curr;
+            }
+          ) models
+          ++ [
+            {
+              "signal-whisper-link" = import ./link.nix { inherit pkgs lib name; };
+            }
+          ]
+        )
+      );
       nixosModules.default = import ./module.nix;
       nixosModules.signal-whisper = import ./module.nix;
-      checks = eachSystem (pkgs: lib: {
-        nushell = import ./tests/service.nix { inherit pkgs; };
-        transcription = import ./tests/transcription.nix { inherit pkgs; };
-      });
+      checks = eachSystem (
+        pkgs: lib: {
+          nushell = import ./tests/service.nix { inherit pkgs; };
+          transcription = import ./tests/transcription.nix { inherit pkgs; };
+        }
+      );
       overlays.default = final: prev: self.packages."x86_64-linux";
       hydraJobs.packages = packages;
     };

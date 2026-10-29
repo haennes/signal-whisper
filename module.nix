@@ -1,285 +1,302 @@
-{ config, lib, pkgs, ... }:
+{
+  config,
+  lib,
+  pkgs,
+  ...
+}:
 
 let
   cfg = config.services.signal-whisper;
 
   secretsProvided =
-    cfg.secrets.accountsFile != null || cfg.secrets.accountDbFile != null
+    cfg.secrets.accountsFile != null
+    || cfg.secrets.accountDbFile != null
     || cfg.secrets.configFile != null;
 
   # Configuration is passed via environment variables set in the unit (not
   # baked into the script) so values with quotes/special chars are safe.
-  script = pkgs.writers.writeNuBin "signal-whisper" {
-    makeWrapperArgs = [
-      "--prefix" "PATH" ":"
-      "${lib.makeBinPath [
-        pkgs.coreutils
-        pkgs.ffmpeg
-        cfg.signalCliPackage
-        cfg.whisperPackage
-      ]}"
-    ];
-  } ''
-    def get-data [parsed: record] {
-      # On a linked device, messages the phone itself sent come in as sync
-      # messages; messages from other group members come in as data messages.
-      if ($parsed.envelope?.syncMessage?.sentMessage?) != null {
-        $parsed.envelope.syncMessage.sentMessage
-      } else if ($parsed.envelope?.dataMessage?) != null {
-        $parsed.envelope.dataMessage
-      } else {
-        null
+  script =
+    pkgs.writers.writeNuBin "signal-whisper"
+      {
+        makeWrapperArgs = [
+          "--prefix"
+          "PATH"
+          ":"
+          "${lib.makeBinPath [
+            pkgs.coreutils
+            pkgs.ffmpeg
+            cfg.signalCliPackage
+            cfg.whisperPackage
+          ]}"
+        ];
       }
-    }
-
-    def allowed-sender [s: string, account: string, senders: list<string>] {
-      if ($s | is-empty) { return false }
-      if $s == $account { return true }
-      print $"($s) in ($senders)"
-      $s in $senders
-    }
-
-    def matches-group [id: string, ghex: string, gb64: string] {
-      print $"matches group ($id) ($ghex) ($gb64)"
-      if ($id | is-empty) { return false }
-      let idl = ($id | str lowercase)
-      ($idl == ($ghex | str lowercase)) or ($idl == ($gb64 | str lowercase))
-    }
-
-    def process-msg [parsed: record, cfg: record] {
-      print $"processing message: ($parsed)"
-      let source = ($parsed.envelope?.source? | default "")
-      let data = (get-data $parsed)
-      if $data == null { return }
-      let group = ($data.destination? | default ($data.groupInfo?.groupId? | default ""))
-      print $"group ($group)"
-      if not (matches-group $group $cfg.group_hex $cfg.group_b64) {
-        print "does not match group skipping"
-        return
-      }
-      if not (allowed-sender $source $cfg.account $cfg.senders) {
-        print $"sender ($source) not allowed"
-        return
-      }
-
-      let atts = ($data.attachments?
-        | default []
-        | where { |a| ($a.voiceNote? == true) or (($a.contentType? | default "") | str starts-with "audio/") }
-        | each { |a| $a.filename? | default $"($env.HOME)/.local/share/signal-cli/attachments/($a.id?)" }
-        | where { |f| $f != null })
-      if ($atts | is-empty) {
-        print $"no audio attachment in ($data.attachments?)"
-        return
-      }
-
-      let tmpdir = (mktemp -d)
-      mut reply = ""
-      for att in $atts {
-        print $"processing audio attachment ($att)"
-        if not ($att | path exists) {
-          print "attachment path does not exist"
-          continue
+      ''
+        def get-data [parsed: record] {
+          # On a linked device, messages the phone itself sent come in as sync
+          # messages; messages from other group members come in as data messages.
+          if ($parsed.envelope?.syncMessage?.sentMessage?) != null {
+            $parsed.envelope.syncMessage.sentMessage
+          } else if ($parsed.envelope?.dataMessage?) != null {
+            $parsed.envelope.dataMessage
+          } else {
+            null
+          }
         }
-        let wav = ($tmpdir | path join "in.wav")
-        let out = ($tmpdir | path join "out")
-        let f = (^ffmpeg -y -v error -i $att -ar 16000 -ac 1 -f wav $wav | complete)
-        if $f.exit_code != 0 {
-          print $"ffmpeg failed ffmpeg -y -v error -i ($att) -ar 16000 -ac 1 -f wav ($wav)"
-          continue
+
+        def allowed-sender [s: string, account: string, senders: list<string>] {
+          if ($s | is-empty) { return false }
+          if $s == $account { return true }
+          print $"($s) in ($senders)"
+          $s in $senders
         }
-        mut wargs = [-m $cfg.model -f $wav -otxt -of $out]
-        if $cfg.language != "auto" {
-          $wargs = ($wargs | append "-l")
-          $wargs = ($wargs | append $cfg.language)
+
+        def matches-group [id: string, ghex: string, gb64: string] {
+          print $"matches group ($id) ($ghex) ($gb64)"
+          if ($id | is-empty) { return false }
+          let idl = ($id | str lowercase)
+          ($idl == ($ghex | str lowercase)) or ($idl == ($gb64 | str lowercase))
         }
-        print $"whisper started with ($wargs)"
-        let w = (^whisper-cli ...$wargs | complete)
-        if $w.exit_code != 0 {
-          print "whisper failed"
-          continue
+
+        def process-msg [parsed: record, cfg: record] {
+          print $"processing message: ($parsed)"
+          let source = ($parsed.envelope?.source? | default "")
+          let data = (get-data $parsed)
+          if $data == null { return }
+          let group = ($data.destination? | default ($data.groupInfo?.groupId? | default ""))
+          print $"group ($group)"
+          if not (matches-group $group $cfg.group_hex $cfg.group_b64) {
+            print "does not match group skipping"
+            return
+          }
+          if not (allowed-sender $source $cfg.account $cfg.senders) {
+            print $"sender ($source) not allowed"
+            return
+          }
+
+          let atts = ($data.attachments?
+            | default []
+            | where { |a| ($a.voiceNote? == true) or (($a.contentType? | default "") | str starts-with "audio/") }
+            | each { |a| $a.filename? | default $"($env.HOME)/.local/share/signal-cli/attachments/($a.id?)" }
+            | where { |f| $f != null })
+          if ($atts | is-empty) {
+            print $"no audio attachment in ($data.attachments?)"
+            return
+          }
+
+          let tmpdir = (mktemp -d)
+          mut reply = ""
+          for att in $atts {
+            print $"processing audio attachment ($att)"
+            if not ($att | path exists) {
+              print "attachment path does not exist"
+              continue
+            }
+            let wav = ($tmpdir | path join "in.wav")
+            let out = ($tmpdir | path join "out")
+            let f = (^ffmpeg -y -v error -i $att -ar 16000 -ac 1 -f wav $wav | complete)
+            if $f.exit_code != 0 {
+              print $"ffmpeg failed ffmpeg -y -v error -i ($att) -ar 16000 -ac 1 -f wav ($wav)"
+              continue
+            }
+            mut wargs = [-m $cfg.model -f $wav -otxt -of $out]
+            if $cfg.language != "auto" {
+              $wargs = ($wargs | append "-l")
+              $wargs = ($wargs | append $cfg.language)
+            }
+            print $"whisper started with ($wargs)"
+            let w = (^whisper-cli ...$wargs | complete)
+            if $w.exit_code != 0 {
+              print "whisper failed"
+              continue
+            }
+            let text = (try { open --raw ($out + ".txt") } catch { "" })
+            $reply += $text
+          }
+          rm -rf $tmpdir
+          if ($reply | is-empty) { return }
+
+          print -e $"signal-whisper: transcribing voice note from ($source) in group ($cfg.group_b64)"
+          mut sargs = [send "-g" $cfg.group_b64]
+          if $cfg.notify_self {
+            $sargs = ($sargs | append "--notify-self")
+          }
+          # systemd/nushell may eat a trailing space in the prefix env var, so
+          # make sure there is always exactly one space before the reply.
+          let body = if ($cfg.prefix | str ends-with " ") {
+            $"($cfg.prefix)($reply)"
+          } else {
+            $"($cfg.prefix) ($reply)"
+          }
+          let r = ($body | ^signal-cli -a $cfg.account ...$sargs --message-from-stdin | complete)
+          if $r.exit_code != 0 {
+            print -e "signal-whisper: failed to send transcription"
+            print $"signal-cli -a ($cfg.account) ($sargs) ($body)"
+          }
         }
-        let text = (try { open --raw ($out + ".txt") } catch { "" })
-        $reply += $text
-      }
-      rm -rf $tmpdir
-      if ($reply | is-empty) { return }
 
-      print -e $"signal-whisper: transcribing voice note from ($source) in group ($cfg.group_b64)"
-      mut sargs = [send "-g" $cfg.group_b64]
-      if $cfg.notify_self {
-        $sargs = ($sargs | append "--notify-self")
-      }
-      # systemd/nushell may eat a trailing space in the prefix env var, so
-      # make sure there is always exactly one space before the reply.
-      let body = if ($cfg.prefix | str ends-with " ") {
-        $"($cfg.prefix)($reply)"
-      } else {
-        $"($cfg.prefix) ($reply)"
-      }
-      let r = ($body | ^signal-cli -a $cfg.account ...$sargs --message-from-stdin | complete)
-      if $r.exit_code != 0 {
-        print -e "signal-whisper: failed to send transcription"
-        print $"signal-cli -a ($cfg.account) ($sargs) ($body)"
-      }
-    }
+        def main [] {
+          # Secrets (account, group id, senders) come from config.json loaded via
+          # LoadCredential; the env vars are only a fallback for manual runs.
+          let creds = ($env.CREDENTIALS_DIRECTORY? | default "")
+          let conf = if ($creds | is-empty) {
+            null
+          } else {
+            let p = ($creds | path join "config.json")
+            if ($p | path exists) {
+              (try { open --raw $p | from json } catch { null })
+            } else {
+              null
+            }
+          }
 
-    def main [] {
-      # Secrets (account, group id, senders) come from config.json loaded via
-      # LoadCredential; the env vars are only a fallback for manual runs.
-      let creds = ($env.CREDENTIALS_DIRECTORY? | default "")
-      let conf = if ($creds | is-empty) {
-        null
-      } else {
-        let p = ($creds | path join "config.json")
-        if ($p | path exists) {
-          (try { open --raw $p | from json } catch { null })
-        } else {
-          null
+          let cfg = {
+            account: (if $conf != null { $conf.account? | default "" } else { $env.SIGNAL_WHISPER_ACCOUNT? | default "" })
+            model: ($env.SIGNAL_WHISPER_MODEL | default "")
+            language: ($env.SIGNAL_WHISPER_LANGUAGE | default "auto")
+            prefix: ($env.SIGNAL_WHISPER_PREFIX | default "Transcript: ")
+            notify_self: (($env.SIGNAL_WHISPER_NOTIFY_SELF | default "1") == "1")
+          }
+
+          # Normalize the configured group id so we can match it regardless of
+          # whether signal-cli reports it as hex or base64.
+          let group_raw = (if $conf != null { $conf.groupId? | default "" } else { $env.SIGNAL_WHISPER_GROUP_ID? | default "" })
+          let cfg = if ($group_raw | is-empty) {
+            $cfg
+          } else if ($group_raw =~ "^[0-9a-fA-F]+$") {
+            { ...$cfg
+              group_hex: $group_raw
+              group_b64: (try { $group_raw | decode hex | encode base64 } catch { "" })
+              send_group: $group_raw
+            }
+          } else {
+            let hex = (try { $group_raw | decode base64 | into binary | encode hex | str lowercase } catch { "" })
+            { ...$cfg
+              group_hex: $hex
+              group_b64: $group_raw
+              send_group: (if ($hex | is-empty) { $group_raw } else { $hex })
+            }
+          }
+
+          let senders = if $conf != null {
+            ($conf.senders? | default [])
+          } else {
+            let raw = ($env.SIGNAL_WHISPER_SENDERS? | default "")
+            if ($raw | is-empty) { [] } else { ($raw | split row "," | where { |s| not ($s | is-empty) }) }
+          }
+          let cfg = { ...$cfg senders: $senders }
+
+          print -e $"signal-whisper: starting receive loop \(account=($cfg.account), group=($cfg.send_group)\)"
+          loop {
+            print "getting msg"
+            let out = (^signal-cli -a $cfg.account -o json receive -t 5 | complete)
+            if $out.exit_code != 0 {
+              print -e $"signal-whisper: signal-cli receive failed: ($out.stderr)"
+              sleep 10sec
+              continue
+            }
+            let stdout = ($out.stdout | str trim)
+            if ($stdout | is-empty) {
+              sleep 10sec
+              continue
+            }
+            let parsed = (try { $stdout | from json } catch { null })
+            if ($parsed == null) {
+              print -e "signal-whisper: could not parse signal-cli receive output"
+              sleep 10sec
+              continue
+            }
+            print $"recieved msg ($stdout)"
+            for m in $parsed {
+              print $"processing message ($m)"
+              process-msg $m $cfg
+            }
+            sleep 10sec
+          }
         }
-      }
+      '';
 
-      let cfg = {
-        account: (if $conf != null { $conf.account? | default "" } else { $env.SIGNAL_WHISPER_ACCOUNT? | default "" })
-        model: ($env.SIGNAL_WHISPER_MODEL | default "")
-        language: ($env.SIGNAL_WHISPER_LANGUAGE | default "auto")
-        prefix: ($env.SIGNAL_WHISPER_PREFIX | default "Transcript: ")
-        notify_self: (($env.SIGNAL_WHISPER_NOTIFY_SELF | default "1") == "1")
+  installSecrets =
+    pkgs.writers.writeNuBin "signal-whisper-install-secrets"
+      {
+        makeWrapperArgs = [
+          "--prefix"
+          "PATH"
+          ":"
+          "${lib.makeBinPath [ pkgs.coreutils ]}"
+        ];
       }
-
-      # Normalize the configured group id so we can match it regardless of
-      # whether signal-cli reports it as hex or base64.
-      let group_raw = (if $conf != null { $conf.groupId? | default "" } else { $env.SIGNAL_WHISPER_GROUP_ID? | default "" })
-      let cfg = if ($group_raw | is-empty) {
-        $cfg
-      } else if ($group_raw =~ "^[0-9a-fA-F]+$") {
-        { ...$cfg
-          group_hex: $group_raw
-          group_b64: (try { $group_raw | decode hex | encode base64 } catch { "" })
-          send_group: $group_raw
+      ''
+        def find-account [value: any, account: string] {
+          if ($value | describe | str starts-with "record") {
+            if (($value.number? | default "") == $account) or (($value.uuid? | default "") == $account) {
+              return ($value.path? | default "")
+            }
+            for k in ($value | columns) {
+              let r = (find-account ($value | get $k) $account)
+              if not ($r | is-empty) { return $r }
+            }
+            ""
+          } else if ($value | describe | str starts-with "list") or ($value | describe | str starts-with "table") {
+            for item in $value {
+              let r = (find-account $item $account)
+              if not ($r | is-empty) { return $r }
+            }
+            ""
+          } else {
+            ""
+          }
         }
-      } else {
-        let hex = (try { $group_raw | decode base64 | into binary | encode hex | str lowercase } catch { "" })
-        { ...$cfg
-          group_hex: $hex
-          group_b64: $group_raw
-          send_group: (if ($hex | is-empty) { $group_raw } else { $hex })
+
+        def main [] {
+          print "starting secret install"
+          let home = ($env.HOME | default "")
+          let creds = ($env.CREDENTIALS_DIRECTORY | default "")
+          if ($home | is-empty) or ($creds | is-empty) {
+            print -e "signal-whisper: HOME and CREDENTIALS_DIRECTORY must be set"
+            exit 1
+          }
+
+          let marker = ($home | path join ".signal-whisper-secrets-installed")
+          if ($marker | path exists) {
+            print "signal-whisper: account secrets already installed, skipping"
+            return
+          }
+
+          let conf = (try { open --raw ($creds | path join "config.json") | from json } catch { null })
+          let account = (if $conf == null { $env.SIGNAL_WHISPER_ACCOUNT? | default "" } else { $conf.account? | default "" })
+          if ($account | is-empty) {
+            print -e "signal-whisper: account not found in secrets config.json"
+            exit 1
+          }
+
+          let data_dir = ($home | path join ".local/share/signal-cli/data")
+          mkdir $data_dir
+          install -m 600 ($creds | path join "accounts.json") ($data_dir | path join "accounts.json")
+
+          let accts = (try { open --raw ($data_dir | path join "accounts.json") | from json } catch { null })
+          let acct = if $accts == null { "" } else { (find-account $accts $account) }
+          if ($acct | is-empty) {
+            print -e $"signal-whisper: could not resolve the account directory for ($account) in accounts.json"
+            exit 1
+          }
+
+          let acct_dir = ($data_dir | path join $"($acct).d")
+          mkdir $acct_dir
+          let db = ($env.SIGNAL_WHISPER_ACCOUNT_DB_FILE | default "")
+          if ($db | is-empty) {
+            print -e "signal-whisper: SIGNAL_WHISPER_ACCOUNT_DB_FILE not set"
+            exit 1
+          }
+
+          install -m 600 $db ($acct_dir | path join "account.db")
+
+          let acct_file = ($data_dir | path join $acct)
+          install -m 600 ($creds | path join "account") $acct_file
+
+          touch $marker
+          print $"signal-whisper: installed account secrets for ($account)"
         }
-      }
-
-      let senders = if $conf != null {
-        ($conf.senders? | default [])
-      } else {
-        let raw = ($env.SIGNAL_WHISPER_SENDERS? | default "")
-        if ($raw | is-empty) { [] } else { ($raw | split row "," | where { |s| not ($s | is-empty) }) }
-      }
-      let cfg = { ...$cfg senders: $senders }
-
-      print -e $"signal-whisper: starting receive loop \(account=($cfg.account), group=($cfg.send_group)\)"
-      loop {
-        print "getting msg"
-        let out = (^signal-cli -a $cfg.account -o json receive -t 5 | complete)
-        if $out.exit_code != 0 {
-          print -e $"signal-whisper: signal-cli receive failed: ($out.stderr)"
-          sleep 10sec
-          continue
-        }
-        let stdout = ($out.stdout | str trim)
-        if ($stdout | is-empty) {
-          sleep 10sec
-          continue
-        }
-        let parsed = (try { $stdout | from json } catch { null })
-        if ($parsed == null) {
-          print -e "signal-whisper: could not parse signal-cli receive output"
-          sleep 10sec
-          continue
-        }
-        print $"recieved msg ($stdout)"
-        for m in $parsed {
-          print $"processing message ($m)"
-          process-msg $m $cfg
-        }
-        sleep 10sec
-      }
-    }
-  '';
-
-  installSecrets = pkgs.writers.writeNuBin "signal-whisper-install-secrets" {
-    makeWrapperArgs = [
-      "--prefix" "PATH" ":" "${lib.makeBinPath [ pkgs.coreutils ]}"
-    ];
-  } ''
-    def find-account [value: any, account: string] {
-      if ($value | describe | str starts-with "record") {
-        if (($value.number? | default "") == $account) or (($value.uuid? | default "") == $account) {
-          return ($value.path? | default "")
-        }
-        for k in ($value | columns) {
-          let r = (find-account ($value | get $k) $account)
-          if not ($r | is-empty) { return $r }
-        }
-        ""
-      } else if ($value | describe | str starts-with "list") or ($value | describe | str starts-with "table") {
-        for item in $value {
-          let r = (find-account $item $account)
-          if not ($r | is-empty) { return $r }
-        }
-        ""
-      } else {
-        ""
-      }
-    }
-
-    def main [] {
-      print "starting secret install"
-      let home = ($env.HOME | default "")
-      let creds = ($env.CREDENTIALS_DIRECTORY | default "")
-      if ($home | is-empty) or ($creds | is-empty) {
-        print -e "signal-whisper: HOME and CREDENTIALS_DIRECTORY must be set"
-        exit 1
-      }
-
-      let marker = ($home | path join ".signal-whisper-secrets-installed")
-      if ($marker | path exists) {
-        print "signal-whisper: account secrets already installed, skipping"
-        return
-      }
-
-      let conf = (try { open --raw ($creds | path join "config.json") | from json } catch { null })
-      let account = (if $conf == null { $env.SIGNAL_WHISPER_ACCOUNT? | default "" } else { $conf.account? | default "" })
-      if ($account | is-empty) {
-        print -e "signal-whisper: account not found in secrets config.json"
-        exit 1
-      }
-
-      let data_dir = ($home | path join ".local/share/signal-cli/data")
-      mkdir $data_dir
-      install -m 600 ($creds | path join "accounts.json") ($data_dir | path join "accounts.json")
-
-      let accts = (try { open --raw ($data_dir | path join "accounts.json") | from json } catch { null })
-      let acct = if $accts == null { "" } else { (find-account $accts $account) }
-      if ($acct | is-empty) {
-        print -e $"signal-whisper: could not resolve the account directory for ($account) in accounts.json"
-        exit 1
-      }
-
-      let acct_dir = ($data_dir | path join $"($acct).d")
-      mkdir $acct_dir
-      let db = ($env.SIGNAL_WHISPER_ACCOUNT_DB_FILE | default "")
-      if ($db | is-empty) {
-        print -e "signal-whisper: SIGNAL_WHISPER_ACCOUNT_DB_FILE not set"
-        exit 1
-      }
-
-      install -m 600 $db ($acct_dir | path join "account.db")
-
-      let acct_file = ($data_dir | path join $acct)
-      install -m 600 ($creds | path join "account") $acct_file
-
-      touch $marker
-      print $"signal-whisper: installed account secrets for ($account)"
-    }
-  '';
+      '';
 in
 {
   options.services.signal-whisper = {
@@ -397,16 +414,23 @@ in
   };
 
   config = lib.mkIf cfg.enable {
-    assertions = [ {
-      assertion = !secretsProvided
-        || (cfg.secrets.accountsFile != null && cfg.secrets.accountDbFile != null
-            && cfg.secrets.configFile != null && cfg.secrets.accountFile != null);
-      message = ''
-        services.signal-whisper.secrets.accountsFile,
-        services.signal-whisper.secrets.accountDbFile and
-        services.signal-whisper.secrets.configFile must be set together.
-      '';
-    } ];
+    assertions = [
+      {
+        assertion =
+          !secretsProvided
+          || (
+            cfg.secrets.accountsFile != null
+            && cfg.secrets.accountDbFile != null
+            && cfg.secrets.configFile != null
+            && cfg.secrets.accountFile != null
+          );
+        message = ''
+          services.signal-whisper.secrets.accountsFile,
+          services.signal-whisper.secrets.accountDbFile and
+          services.signal-whisper.secrets.configFile must be set together.
+        '';
+      }
+    ];
 
     warnings = lib.mkIf (!secretsProvided) [
       ''
@@ -437,8 +461,7 @@ in
       after = [ "network-online.target" ];
       wants = [ "network-online.target" ];
       wantedBy = [ "multi-user.target" ];
-      preStart = lib.mkIf secretsProvided
-        "${installSecrets}/bin/signal-whisper-install-secrets";
+      preStart = lib.mkIf secretsProvided "${installSecrets}/bin/signal-whisper-install-secrets";
       serviceConfig = {
         Type = "simple";
         User = cfg.user;
