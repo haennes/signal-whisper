@@ -171,7 +171,6 @@ pkgs.writers.writeNuBin "signal-whisper-link"
       let config = {
         account: $account
         groupId: $group.id
-        senders: []
       }
       let out_config = ($out | path join "config.json")
       let out_accounts = ($out | path join "accounts.json")
@@ -195,7 +194,6 @@ pkgs.writers.writeNuBin "signal-whisper-link"
       print "  services.signal-whisper.secrets.accountDbFile = /path/to/account.db;"
       print "  services.signal-whisper.secrets.configFile = /path/to/config.json;"
       print ""
-      print $"config.json watches group '($group.name)' (($group.id)) for sender ($account)."
-      print "Add other allowed senders to the 'senders' list in config.json if needed."
+      print $"config.json selects group '($group.name)' (($group.id)) for transcriptions from any sender."
     }
   ''

@@ -3,13 +3,16 @@
 # Replaces signal-cli/ffmpeg/whisper-cpp with stub binaries (see stubs/)
 # and verifies the whole chain end to end inside a VM:
 #   preStart installs the LoadCredential secrets into the data dir, the
-#   service receives a batch of envelopes (one matching voice note from the
-#   linked phone, one plain-text message, one voice note from a stranger),
-#   transcribes the matching one and sends "Transcript: ..." back.
+#   service receives messages from any sender, enforces duration and rate
+#   limits outside the selected group, and routes replies and notices there.
 { pkgs }:
 
 let
   stub = name: pkgs.writeShellScriptBin name (builtins.readFile ./stubs/${name}.sh);
+  ffprobe = pkgs.writeShellScriptBin "ffprobe" ''
+    input="''${@: -1}"
+    if [[ "$input" == *voice-long* || "$input" == *voice-a-id* ]]; then echo 121; else echo 30; fi
+  '';
   modelPackages = import ../modelPackages.nix {
     inherit pkgs;
     lib = pkgs.lib;
@@ -25,7 +28,10 @@ let
     config = { };
     overlays = [
       (final: prev: {
-        ffmpeg = stub "ffmpeg";
+        ffmpeg = pkgs.symlinkJoin {
+          name = "ffmpeg-stubs";
+          paths = [ (stub "ffmpeg") ffprobe ];
+        };
       })
     ];
   };
@@ -86,14 +92,31 @@ pkgs.testers.runNixOSTest {
       "test -f /var/lib/signal-whisper/.local/share/signal-cli/data/854007.d/account.db"
     )
 
-    # exactly the matching voice note gets transcribed and sent back
-    machine.wait_until_succeeds("grep -q 'Transcript: hallo welt' /tmp/send-log.txt")
+    # Any sender can trigger five transcriptions per hour outside the selected
+    # group; the next request is blocked. Group names and sender names are
+    # included in the reply header, and the selected group bypasses the limits.
+    machine.wait_until_succeeds("grep -q 'hallo welt' /tmp/send-log.txt")
     machine.succeed("grep -q -- '--notify-self' /tmp/send-log.txt")
     machine.succeed("grep -q -- '-g XS8KGw==' /tmp/send-log.txt")
-    machine.succeed("test $(grep -c '^CALL:' /tmp/send-log.txt) -eq 1")
+    machine.wait_until_succeeds("grep -q 'From Alice:' /tmp/send-log.txt")
+    machine.wait_until_succeeds("grep -q 'From Alice in Friends:' /tmp/send-log.txt")
+    machine.wait_until_succeeds("grep -q 'From Alice in Home:' /tmp/send-log.txt")
+    machine.wait_until_succeeds("test $(grep -c 'hallo welt' /tmp/send-log.txt) -eq 7")
+    machine.succeed("grep -q 'limit is 5 per hour' /tmp/send-log.txt")
+    machine.succeed("test $(grep -c 'limit is 5 per hour' /tmp/send-log.txt) -eq 1")
+    machine.succeed("grep -q 'no longer than 120 seconds' /tmp/send-log.txt")
+    machine.wait_until_succeeds("test $(grep -c '^CALL:' /tmp/send-log.txt) -eq 9", timeout=30)
+
+    # Single-object and newline-delimited JSON receive output are accepted;
+    # typing events are ignored rather than reported as parse failures.
+    machine.wait_until_succeeds("test -f /tmp/single-object-done", timeout=30)
+    machine.wait_until_succeeds("test -f /tmp/ndjson-done", timeout=30)
+    machine.sleep(1)
+    machine.succeed("! journalctl -u signal-whisper --no-pager | grep -q 'could not parse signal-cli receive output'")
 
     # the service logged the transcription and the credentials were loaded
     machine.succeed("journalctl -u signal-whisper --no-pager | grep -q 'transcribing voice note'")
+    machine.succeed("! journalctl -u signal-whisper --no-pager | grep -q 'getting msg'")
     machine.succeed("find /run/credentials -maxdepth 2 -name accounts.json | grep -q .")
     machine.succeed("find /run/credentials -maxdepth 2 -name config.json | grep -q .")
     machine.succeed("find /run/credentials -maxdepth 2 -name account | grep -q .")

@@ -4,24 +4,24 @@ Transcribe Signal voice notes with whisper and send the transcription back to
 a group.
 
 The service registers your phone number as an additional (linked) Signal
-device via [signal-cli](https://github.com/AsamK/signal-cli). When you send a
-voice note to a dedicated group (from your phone or from any allowed sender),
-it is downloaded, transcribed with
-[whisper.cpp](https://github.com/ggerganov/whisper.cpp) and the text is sent
-back to the group as a normal message.
+device via [signal-cli](https://github.com/AsamK/signal-cli). Voice notes from
+any sender, received in direct messages or groups, are transcribed with
+[whisper.cpp](https://github.com/ggerganov/whisper.cpp) and sent back to the
+selected group as a normal message.
 
 ## How it works
 
 ```
 phone voice note ──▶ Signal ──▶ signal-cli receive ──▶ ffmpeg ──▶ whisper ──▶ signal-cli send ──▶ group
                                     ▲                    │                       │
-                                    │                    └──── "Transcript: ..." ─┘
+                                    │                    └──── transcription ────┘
                     systemd service (services.signal-whisper)
 ```
 
-A systemd service loops `signal-cli receive`, filters the envelopes to the
-configured group and sender, converts audio attachments with ffmpeg, runs
-whisper to produce text and sends `Transcript: <text>` back to the group.
+A systemd service loops `signal-cli receive`, converts audio attachments with
+ffmpeg, runs whisper to produce text and sends it to the configured group. The
+service has audio length and rate limits; notes sent or forwarded to the
+selected group bypass them.
 Account secrets are injected into the unit via systemd `LoadCredential` and
 installed into the service data directory once on first start.
 
@@ -58,13 +58,11 @@ and exports the four secret files:
 ./signal-whisper-secrets/accounts.json
 ./signal-whisper-secrets/account.db
 ./signal-whisper-secrets/account
-./signal-whisper-secrets/config.json   # account, groupId, senders
+./signal-whisper-secrets/config.json   # account, groupId
 ```
 
-`config.json` holds the account (phone number), the id of the group to watch
-and the list of allowed `senders`. By default only the account's own number is
-allowed to trigger a transcription; add other phone numbers to the `senders`
-list if you want them to be able to send voice notes as well.
+`config.json` holds the account (phone number) and selected group id. Existing
+`senders` fields are ignored.
 
 ## 2. Configure the module (on the server)
 
@@ -91,7 +89,7 @@ Copy the exported secret files to the server (typically wired to
             enable = true;
             modelName = "tiny.en"; # or e.g. "base-q5_1"
             # language = "auto";   # or e.g. "de"
-            # messagePrefix = "Transcript: ";
+            # messagePrefix = "Voice note — ";
             # notifySelf = true;
             secrets = {
               accountsFile = "/run/secrets/accounts.json";
@@ -124,12 +122,13 @@ Set exactly one of `modelName` (a model package name such as `tiny.en`) or
 | `dataDir` | `/var/lib/signal-whisper` | Directory holding the service and signal-cli data. |
 | `user` | `signal-whisper` | System user the service runs as. |
 | `language` | `auto` | Language passed to whisper (`auto` lets it guess). |
-| `messagePrefix` | `Transcript: ` | Text prepended to each transcription. |
+| `messagePrefix` | `""` | Optional text prepended to the sender and group header. |
 | `notifySelf` | `true` | Send with `--notify-self` so replies also appear in the phone conversation. |
+| `maxAudioLengthSeconds` | `120` | Maximum voice-message duration outside the selected group. |
 | `secrets.accountsFile` | `null` | `accounts.json` from the linking tool. |
 | `secrets.accountFile` | `null` | `account` from the linking tool. |
 | `secrets.accountDbFile` | `null` | `account.db` from the linking tool. |
-| `secrets.configFile` | `null` | `config.json` from the linking tool (account, groupId, senders). |
+| `secrets.configFile` | `null` | `config.json` from the linking tool (account and groupId). |
 
 The four `secrets.*` options must be set together. Enabling the module without
 secrets emits a warning; the service is started without them.
@@ -141,13 +140,11 @@ The flake ships two checks (`checks.<system>.*`):
 
 - `nushell` – a NixOS VM test that replaces signal-cli/ffmpeg/whisper-cpp with
   stubs and verifies the full chain end to end: secrets installation,
-  filtering by group/sender, transcription and reply, and that secrets are
-  only installed once across restarts.
+  all-sender transcription, length and rate limits, selected-group bypass,
+  notifications, and that secrets are only installed once across restarts.
 - `transcription` – feeds the real `tests/transcribing.mp3` through the
   actual ffmpeg + whisper pipeline and checks the transcribed text.
 
 ```console
 nix flake check
 ```
-
-
