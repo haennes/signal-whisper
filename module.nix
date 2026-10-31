@@ -67,13 +67,6 @@ let
           }
         }
 
-        def allowed-sender [s: string, account: string, senders: list<string>] {
-          if ($s | is-empty) { return false }
-          if $s == $account { return true }
-          print $"($s) in ($senders)"
-          $s in $senders
-        }
-
         def matches-group [id: string, ghex: string, gb64: string] {
           print $"matches group ($id) ($ghex) ($gb64)"
           if ($id | is-empty) { return false }
@@ -81,21 +74,91 @@ let
           ($idl == ($ghex | str lowercase)) or ($idl == ($gb64 | str lowercase))
         }
 
+        def group-name [id: string, groups: list] {
+          let idb64 = if ($id =~ "^[0-9a-fA-F]+$") {
+            (try { $id | decode hex | encode base64 } catch { "" })
+          } else { $id }
+          let matches = ($groups | where { |g|
+            (($g.id? | default "") | str lowercase) == ($idb64 | str lowercase)
+          })
+          if ($matches | is-empty) { "" } else { ($matches.0.name? | default "" | str trim) }
+        }
+
+        def record-messages [value: any] {
+          if ($value | describe | str starts-with "record") {
+            [$value]
+          } else if (($value | describe | str starts-with "list") or ($value | describe | str starts-with "table")) {
+            ($value | where { |item| $item | describe | str starts-with "record" })
+          } else {
+            []
+          }
+        }
+
+        def parse-receive-output [stdout: string] {
+          let parsed = (try { $stdout | from json } catch { null })
+          if $parsed != null {
+            (record-messages $parsed)
+          } else {
+            let messages = ($stdout
+              | lines
+              | each { |line| try { $line | from json } catch { null } }
+              | where { |item| ($item != null) and ($item | describe | str starts-with "record") })
+            if ($messages | is-empty) { null } else { $messages }
+          }
+        }
+
+        def notify-group [cfg: record, body: string] {
+          mut sargs = [send "-g" $cfg.group_b64]
+          if $cfg.notify_self {
+            $sargs = ($sargs | append "--notify-self")
+          }
+          let r = ($body | ^signal-cli -a $cfg.account ...$sargs --message-from-stdin | complete)
+          if $r.exit_code != 0 {
+            print -e $"signal-whisper: failed to notify selected group: ($r.stderr)"
+          }
+        }
+
+        def notify-block [cfg: record, sender: string, body: string] {
+          let now = (date now | into int)
+          let entries = if ($cfg.rate_file | path exists) {
+            (try { open --raw $cfg.rate_file | from json } catch { [] })
+          } else { [] }
+          let recent = ($entries | where { |e| ($now - $e.time) < 3600000000000 })
+          let already_notified = ($recent | any { |e| ($e.sender == $sender) and ($e.notice? | default false) })
+          if $already_notified { return }
+          let updated = ($recent | append { sender: $sender, time: $now, notice: true })
+          let tmp = ($cfg.rate_file + ".tmp")
+          $updated | to json | save --force $tmp
+          chmod 600 $tmp
+          mv $tmp $cfg.rate_file
+          notify-group $cfg $body
+        }
+
+        def consume-slot [sender: string, cfg: record] {
+          let now = (date now | into int)
+          let entries = if ($cfg.rate_file | path exists) {
+            (try { open --raw $cfg.rate_file | from json } catch { [] })
+          } else { [] }
+          let recent = ($entries | where { |e| ($now - $e.time) < 3600000000000 })
+          let sender_entries = ($recent | where { |e| ($e.sender == $sender) and not ($e.notice? | default false) })
+          if ($sender_entries | length) >= 5 {
+            return false
+          }
+          let updated = ($recent | append { sender: $sender, time: $now })
+          let tmp = ($cfg.rate_file + ".tmp")
+          $updated | to json | save --force $tmp
+          chmod 600 $tmp
+          mv $tmp $cfg.rate_file
+          true
+        }
+
         def process-msg [parsed: record, cfg: record] {
-          print $"processing message: ($parsed)"
           let source = ($parsed.envelope?.source? | default "")
           let data = (get-data $parsed)
           if $data == null { return }
           let group = ($data.destination? | default ($data.groupInfo?.groupId? | default ""))
           print $"group ($group)"
-          if not (matches-group $group $cfg.group_hex $cfg.group_b64) {
-            print "does not match group skipping"
-            return
-          }
-          if not (allowed-sender $source $cfg.account $cfg.senders) {
-            print $"sender ($source) not allowed"
-            return
-          }
+          let bypass_limits = (matches-group $group $cfg.group_hex $cfg.group_b64)
 
           let atts = ($data.attachments?
             | default []
@@ -123,6 +186,22 @@ let
               print "attachment path does not exist"
               continue
             }
+            if not $bypass_limits {
+              let probe = (^ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 $att | complete)
+              let duration = (try { $probe.stdout | str trim | into float } catch { null })
+              if ($probe.exit_code != 0) or ($duration == null) {
+                notify-block $cfg $source $"Blocked voice message from ($source): audio duration could not be verified."
+                continue
+              }
+              if $duration > $cfg.max_audio_seconds {
+                notify-block $cfg $source $"Blocked voice message from ($source): audio must be no longer than ($cfg.max_audio_seconds) seconds."
+                continue
+              }
+              if not (consume-slot $source $cfg) {
+                notify-block $cfg $source $"Blocked voice message from ($source): transcription limit is 5 per hour."
+                continue
+              }
+            }
             let wav = ($tmpdir | path join "in.wav")
             let out = ($tmpdir | path join "out")
             let f = (^ffmpeg -y -v error -i $att -ar 16000 -ac 1 -f wav $wav | complete)
@@ -147,27 +226,24 @@ let
           rm -rf $tmpdir
           if ($reply | is-empty) { return }
 
-          print -e $"signal-whisper: transcribing voice note from ($source) in group ($cfg.group_b64)"
-          mut sargs = [send "-g" $cfg.group_b64]
-          if $cfg.notify_self {
-            $sargs = ($sargs | append "--notify-self")
-          }
-          # systemd/nushell may eat a trailing space in the prefix env var, so
-          # make sure there is always exactly one space before the reply.
-          let body = if ($cfg.prefix | str ends-with " ") {
-            $"($cfg.prefix)($reply)"
+          let source_name = ($parsed.envelope?.sourceName? | default "")
+          let source_label = if ($source_name | is-empty) { $source } else { $source_name }
+          let source_group = (group-name $group $cfg.groups)
+          let origin = if ($source_group | is-empty) { $"From ($source_label)" } else { $"From ($source_label) in ($source_group)" }
+          let header = if ($cfg.prefix | is-empty) {
+            $origin
+          } else if ($cfg.prefix | str ends-with " ") {
+            $"($cfg.prefix)($origin)"
           } else {
-            $"($cfg.prefix) ($reply)"
+            $"($cfg.prefix) ($origin)"
           }
-          let r = ($body | ^signal-cli -a $cfg.account ...$sargs --message-from-stdin | complete)
-          if $r.exit_code != 0 {
-            print -e "signal-whisper: failed to send transcription"
-            print $"signal-cli -a ($cfg.account) ($sargs) ($body)"
-          }
+          let body = $"($header):\n($reply)"
+          print -e $"signal-whisper: transcribing voice note from ($source) in ($group)"
+          notify-group $cfg $body
         }
 
         def main [] {
-          # Secrets (account, group id, senders) come from config.json loaded via
+          # Secrets (account and group id) come from config.json loaded via
           # LoadCredential; the env vars are only a fallback for manual runs.
           let creds = ($env.CREDENTIALS_DIRECTORY? | default "")
           let conf = if ($creds | is-empty) {
@@ -185,8 +261,10 @@ let
             account: (if $conf != null { $conf.account? | default "" } else { $env.SIGNAL_WHISPER_ACCOUNT? | default "" })
             model: ($env.SIGNAL_WHISPER_MODEL | default "")
             language: ($env.SIGNAL_WHISPER_LANGUAGE | default "auto")
-            prefix: ($env.SIGNAL_WHISPER_PREFIX | default "Transcript: ")
+            prefix: ($env.SIGNAL_WHISPER_PREFIX | default "")
             notify_self: (($env.SIGNAL_WHISPER_NOTIFY_SELF | default "1") == "1")
+            max_audio_seconds: (($env.SIGNAL_WHISPER_MAX_AUDIO_SECONDS | default "120") | into int)
+            rate_file: ($env.HOME | path join ".signal-whisper-rate-limits.json")
           }
 
           # Normalize the configured group id so we can match it regardless of
@@ -209,17 +287,14 @@ let
             }
           }
 
-          let senders = if $conf != null {
-            ($conf.senders? | default [])
-          } else {
-            let raw = ($env.SIGNAL_WHISPER_SENDERS? | default "")
-            if ($raw | is-empty) { [] } else { ($raw | split row "," | where { |s| not ($s | is-empty) }) }
-          }
-          let cfg = { ...$cfg senders: $senders }
+          let groups_out = (^signal-cli -a $cfg.account -o json listGroups | complete)
+          let groups = if $groups_out.exit_code == 0 {
+            (try { $groups_out.stdout | from json } catch { [] })
+          } else { [] }
+          let cfg = { ...$cfg groups: $groups }
 
           print -e $"signal-whisper: starting receive loop \(account=($cfg.account), group=($cfg.send_group)\)"
           loop {
-            print "getting msg"
             let out = (^signal-cli -a $cfg.account -o json receive -t 5 | complete)
             if $out.exit_code != 0 {
               print -e $"signal-whisper: signal-cli receive failed: ($out.stderr)"
@@ -231,15 +306,13 @@ let
               sleep 10sec
               continue
             }
-            let parsed = (try { $stdout | from json } catch { null })
+            let parsed = (parse-receive-output $stdout)
             if ($parsed == null) {
               print -e "signal-whisper: could not parse signal-cli receive output"
               sleep 10sec
               continue
             }
-            print $"recieved msg ($stdout)"
             for m in $parsed {
-              print $"processing message ($m)"
               process-msg $m $cfg
             }
             sleep 10sec
@@ -334,7 +407,8 @@ in
   options.services.signal-whisper = {
     enable = lib.mkEnableOption ''
       a systemd service that receives Signal messages and transcribes voice
-      notes sent by you to a dedicated group using whisper.
+      notes from any sender using whisper, then sends the transcription to a
+      dedicated group.
 
       signal-cli is registered as an additional (linked) device of your
       phone number. Link it once on a trusted machine (your phone is needed
@@ -343,7 +417,7 @@ in
         nix run .#signal-whisper-link -- <phone number> <out-dir>
 
       The linking script exports the secret files (including a config.json
-      holding the account, the group id and the allowed senders) that must
+      holding the account and selected group) that must
       then be supplied to the server via `secrets.accountsFile`,
       `secrets.accountDbFile` and `secrets.configFile`.
     '';
@@ -410,8 +484,8 @@ in
 
     messagePrefix = lib.mkOption {
       type = lib.types.str;
-      default = "Transcript: ";
-      description = "Text prepended to each transcription sent to the group.";
+      default = "";
+      description = "Optional text prepended to the sender and group header.";
     };
 
     notifySelf = lib.mkOption {
@@ -421,6 +495,12 @@ in
         Send the transcription with --notify-self so it also shows up in the
         conversation on the phone.
       '';
+    };
+
+    maxAudioLengthSeconds = lib.mkOption {
+      type = lib.types.ints.positive;
+      default = 120;
+      description = "Reject voice messages longer than this many seconds outside the selected group.";
     };
 
     secrets = {
@@ -455,11 +535,10 @@ in
         default = null;
         description = ''
           Secret file `config.json` as exported by the linking script. It
-          holds the account (phone number), the id of the group to watch and
-          the optional list of allowed senders, e.g.:
-          {"account": "+491234567890", "groupId": "5d2f...", "senders": []}.
-          `senders` may contain phone numbers allowed to trigger
-          transcription; by default only the account's own number is allowed.
+          holds the account (phone number) and selected group id, e.g.:
+          {"account": "+491234567890", "groupId": "5d2f..."}.
+          Voice messages from any sender are accepted; legacy `senders` fields
+          in existing config files are ignored.
           Usually wired to agenix/sops via a file path.
         '';
       };
@@ -543,6 +622,7 @@ in
           "SIGNAL_WHISPER_LANGUAGE=${cfg.language}"
           "SIGNAL_WHISPER_PREFIX=${cfg.messagePrefix}"
           "SIGNAL_WHISPER_NOTIFY_SELF=${if cfg.notifySelf then "1" else "0"}"
+          "SIGNAL_WHISPER_MAX_AUDIO_SECONDS=${toString cfg.maxAudioLengthSeconds}"
           "SIGNAL_WHISPER_ACCOUNT_DB_FILE=${cfg.secrets.accountDbFile}"
 
         ];

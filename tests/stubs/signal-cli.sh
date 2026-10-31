@@ -21,6 +21,7 @@ case "$SUB" in
       mkdir -p "$HOME/.local/share/signal-cli/attachments"
       printf 'notreallyaudiodata' > "$HOME/.local/share/signal-cli/attachments/voice-a-id"
       printf 'notreallyaudiodata' > /tmp/voice-b.mp4
+      printf 'notreallyaudiodata' > /tmp/voice-long.mp4
       cat <<'JSON'
 [
   {
@@ -49,16 +50,77 @@ case "$SUB" in
   {
     "envelope": {
       "source": "+49876543210",
+      "sourceName": "Alice",
       "dataMessage": {
-        "groupInfo": {"groupId": "XS8KGw=="},
+        "groupInfo": {"groupId": "T3RoZXI="},
         "attachments": [
           {"voiceNote": true, "contentType": "audio/mp4", "filename": "/tmp/voice-b.mp4"}
         ]
       }
     }
+  },
+  {
+    "envelope": {
+      "source": "+49876543210",
+      "sourceName": "Alice",
+      "dataMessage": {"attachments": [{"voiceNote": true, "contentType": "audio/mp4", "filename": "/tmp/voice-b.mp4"}]}
+    }
+  },
+  {
+    "envelope": {
+      "source": "+49876543210",
+      "dataMessage": {"attachments": [{"voiceNote": true, "contentType": "audio/mp4", "filename": "/tmp/voice-b.mp4"}]}
+    }
+  },
+  {
+    "envelope": {
+      "source": "+49876543210",
+      "dataMessage": {"attachments": [{"voiceNote": true, "contentType": "audio/mp4", "filename": "/tmp/voice-b.mp4"}]}
+    }
+  },
+  {
+    "envelope": {
+      "source": "+49876543210",
+      "dataMessage": {"attachments": [{"voiceNote": true, "contentType": "audio/mp4", "filename": "/tmp/voice-b.mp4"}]}
+    }
+  },
+  {
+    "envelope": {
+      "source": "+49876543210",
+      "dataMessage": {"attachments": [{"voiceNote": true, "contentType": "audio/mp4", "filename": "/tmp/voice-b.mp4"}]}
+    }
+  },
+  {
+    "envelope": {
+      "source": "+49876543210",
+      "dataMessage": {"attachments": [{"voiceNote": true, "contentType": "audio/mp4", "filename": "/tmp/voice-b.mp4"}]}
+    }
+  },
+  {
+    "envelope": {
+      "source": "+49876543210",
+      "sourceName": "Alice",
+      "dataMessage": {
+        "groupInfo": {"groupId": "XS8KGw=="},
+        "attachments": [{"voiceNote": true, "contentType": "audio/mp4", "filename": "voice-note.mp4", "id": "voice-a-id"}]
+      }
+    }
+  },
+  {
+    "envelope": {
+      "source": "+49111111111",
+      "dataMessage": {"attachments": [{"voiceNote": true, "contentType": "audio/mp4", "filename": "/tmp/voice-long.mp4"}]}
+    }
   }
 ]
 JSON
+    elif [ ! -e /tmp/single-object-done ]; then
+      printf '%s\n' '{"envelope":{"source":"5644fa3a-e6d1-4b40-af4b-4267bfc758c8","sourceUuid":"5644fa3a-e6d1-4b40-af4b-4267bfc758c8","sourceName":"Hannes","typingMessage":{"action":"STARTED"}},"account":"+491234567890"}'
+      touch /tmp/single-object-done
+    elif [ ! -e /tmp/ndjson-done ]; then
+      printf '%s\n' '{"envelope":{"source":"+49876543210","dataMessage":{"body":"ndjson-check","attachments":[]}},"account":"+491234567890"}'
+      printf '%s\n' '{"envelope":{"source":"5644fa3a-e6d1-4b40-af4b-4267bfc758c8","typingMessage":{"action":"STARTED"}},"account":"+491234567890"}'
+      touch /tmp/ndjson-done
     else
       printf '[]\n'
     fi
@@ -66,6 +128,7 @@ JSON
   send)
     echo "CALL: $ORIG" >> /tmp/send-log.txt
     cat >> /tmp/send-log.txt
+    echo >> /tmp/send-log.txt
     ;;
   link)
     mkdir -p "$DATA/data/${ACCT}"
@@ -74,5 +137,13 @@ JSON
     ;;
   listAccounts)
     echo "$ACCT"
+    ;;
+  listGroups)
+    cat <<'JSON'
+[
+  {"id":"XS8KGw==","name":"Home"},
+  {"id":"T3RoZXI=","name":"Friends"}
+]
+JSON
     ;;
 esac
